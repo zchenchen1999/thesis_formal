@@ -419,12 +419,12 @@ def optimize_weights_and_threshold(path, r_name=[]):
 #################################################
 # 衡量單一 LLM 回傳內容 (最高機率) - 總表
 # webmd, bc5cdr
-data = "webmd"
+data = "bc5cdr"
 # gpt, openllm
 llm_type = "gpt"
-train_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_15_train_r_dsm_gpt-4o-mini.csv'
+train_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/zeroshot_cot/12_05_bc5cdr_train_r_dsm_gpt-3.5-turbo.csv'
 
-r_name = ['default_result'] # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+r_name = ['multi_hop_result'] # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
 df = pd.read_csv(train_path)
 # df = df[df[r_name[0]] != '{}'] # 過濾掉沒結果的row
 print(r_name[0])
@@ -432,7 +432,7 @@ print(df.shape)
 df = preprocess(df, r_name+['original_result'] if ('original_result' not in r_name) else r_name)
 # type(df.loc[0, 'consecutive_result'])
 # df['predict'] = df.apply(lambda x: get_highest_pro_result(x[r_name[0]])
-if (llm_type == "webmd"):
+if (llm_type == "gpt"):
     df['predict'] = df.apply(lambda x: get_highest_pro_result(x['original_result'], data) if x[r_name[0]] == {} else get_highest_pro_result(x[r_name[0]], data), axis=1)
 else:
     print(data)
