@@ -23,10 +23,10 @@ from create_sentences import get_vertex_set, get_sentences
 from evidence_path_rule import extract_path, get_evidence_by_entity_pair
 from evidence_path_graph import get_evidence_sents
 # 找尋 umls path
-from evidence_path_umls import get_umls_evidence
+# from evidence_path_umls import get_umls_evidence
 
 import utils
-from open_llm import get_open_llm_result
+from open_llm import get_open_llm_result, get_total_token_num
 
 # %%
 def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model="gpt-3.5-turbo", parse=False, data="webmd"):
@@ -66,14 +66,29 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     vertexSet = get_vertex_set(entity_list, sents)
     # consecutive
     consecutive = extract_path(sents, vertexSet, True, path_type="consecutive")
-    consecutive_string = get_evidence_by_entity_pair(head_mention, tail_mention, entity_list, sents, consecutive)
+    consecutive_indexs, consecutive_string = get_evidence_by_entity_pair(head_mention, tail_mention, entity_list, sents, consecutive)
+    
     # multi_hop
-    sentences_index, link_path_string, multi_hop_string = get_evidence_sents(sents, entity_list, head_mention, tail_mention)
+    multi_hop_indexs, link_path_string, multi_hop_string = get_evidence_sents(sents, entity_list, head_mention, tail_mention)
     # default
     default = extract_path(sents, vertexSet, True, path_type="default")
-    default_string = get_evidence_by_entity_pair(head_mention, tail_mention, entity_list, sents, default)
+    default_indexs, default_string = get_evidence_by_entity_pair(head_mention, tail_mention, entity_list, sents, default)
     # UMLS path
     # _, umls_string = get_umls_evidence(head_mention, tail_mention, all_drug_metions, all_symptom_mentions, scispacy_entity)
+
+    # 取交集
+    intersection_indexs = set(consecutive_indexs) & set(multi_hop_indexs) & set(default_indexs)
+    intersection_indexs = list(intersection_indexs)
+    intersection_string = ""
+    for index, sentence_index in enumerate(intersection_indexs):
+        intersection_string += f"{index+1}. {sents[sentence_index]}\n"
+
+    # 取聯集
+    union_indexs = set(consecutive_indexs) | set(multi_hop_indexs) | set(default_indexs)
+    union_indexs = list(union_indexs)
+    union_string = ""
+    for index, sentence_index in enumerate(union_indexs):
+        union_string += f"{index+1}. {sents[sentence_index]}\n"
 
     ################################
     # 取得不同 path 的 demonstration 
@@ -82,6 +97,8 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     consecutive_demonstrations = sample_demonstration_prompt(df_test, sample_num, path_type="consecutive")
     multi_hop_demonstrations = sample_demonstration_prompt(df_test, sample_num, path_type="multi_hop")
     default_demonstrations = sample_demonstration_prompt(df_test, sample_num, path_type="default")
+    # intersection_demonstrations = sample_demonstration_prompt(df_test, sample_num, path_type="intersection")
+    # union_demonstrations = sample_demonstration_prompt(df_test, sample_num, path_type="union")
     # umls_demonstrations = sample_demonstration_prompt(df_test, 1, path_type="umls")
     
     #################
@@ -91,12 +108,14 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     consecutive_result = {}
     multi_hop_result = {}
     default_result = {}
-
+    # intersection_result = {}
+    # union_result = {}
 
     print(f"本次使用模型為： {model}")
     # original
     if (context == ""):
         original_result = {}
+        original_token_num = 0
     else:
         llm_var = {
             'demonstrations': original_demonstrations, 
@@ -104,6 +123,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
             'head_entity': head_mention,
             'tail_entity': tail_mention
         }
+        original_token_num = get_total_token_num(system_prompt, ICL_user_prompt, var_dict=llm_var, print_prompt=False)
         if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
             # original_result = {} 
             original_response, original_top_classes, original_final_prompt = utils.get_llm_result(
@@ -120,6 +140,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     # consecutive
     if (consecutive_string == ""):
         consecutive_result = {}
+        consecutive_token_num = 0
     else:
         # consecutive_result = consecutive_string
         llm_var = {
@@ -129,6 +150,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
             'head_entity': head_mention,
             'tail_entity': tail_mention
         }
+        consecutive_token_num = get_total_token_num(system_prompt, evidence_user_prompt, var_dict=llm_var, print_prompt=False)
         if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
             consecutive_response, consecutive_top_classes, consecutive_final_prompt = utils.get_llm_result(
                 system_prompt, evidence_user_prompt, var_dict=llm_var, model=model)
@@ -146,6 +168,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     # multi_hop
     if (multi_hop_string == ""):
         multi_hop_result = {}
+        multi_hop_token_num = 0
     else:
         # multi_hop_result = multi_hop_string
         llm_var = {
@@ -155,6 +178,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
             'head_entity': head_mention,
             'tail_entity': tail_mention
         }
+        multi_hop_token_num = get_total_token_num(system_prompt, evidence_user_prompt, var_dict=llm_var, print_prompt=False)
         if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
             multi_hop_response, multi_hop_top_classes, multi_hop_final_prompt = utils.get_llm_result(
                 system_prompt, evidence_user_prompt, var_dict=llm_var, model=model)
@@ -162,7 +186,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
             multi_hop_result['top_logprobs'] = multi_hop_top_classes
             multi_hop_result['evidence'] = multi_hop_string
             multi_hop_result['prompt'] = multi_hop_final_prompt
-            multi_hop_result['sentence_index'] = sentences_index
+            multi_hop_result['sentence_index'] = multi_hop_indexs
         else:
             multi_hop_response = get_open_llm_result(
                     system_prompt, evidence_user_prompt, var_dict=llm_var, data=data, parse=parse
@@ -172,6 +196,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     # # default
     if (default_string == ""):
         default_result = {}
+        default_token_num = 0
     else:
         # default_result = default_string
         llm_var = {
@@ -181,6 +206,7 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
             'head_entity': head_mention,
             'tail_entity': tail_mention
         }
+        default_token_num = get_total_token_num(system_prompt, evidence_user_prompt, var_dict=llm_var, print_prompt=False)
         if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
             default_response, default_top_classes, default_final_prompt = utils.get_llm_result(
                 system_prompt, evidence_user_prompt, var_dict=llm_var, model=model)
@@ -193,7 +219,57 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
                     system_prompt, evidence_user_prompt, var_dict=llm_var, data=data, parse=parse
                 )
             default_result['response'] = default_response
-        
+
+    # # intersection
+    # if (intersection_string == ""):
+    #     intersection_result = {}
+    # else:
+    #     # consecutive_result = consecutive_string
+    #     llm_var = {
+    #         'demonstrations': intersection_demonstrations, 
+    #         'context': context,
+    #         'evidence': intersection_string,
+    #         'head_entity': head_mention,
+    #         'tail_entity': tail_mention
+    #     }
+    #     if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
+    #         intersection_response, intersection_top_classes, intersection_final_prompt = utils.get_llm_result(
+    #             system_prompt, evidence_user_prompt, var_dict=llm_var, model=model)
+    #         intersection_result['response'] = intersection_response
+    #         intersection_result['top_logprobs'] = intersection_top_classes
+    #         intersection_result['evidence'] = intersection_string
+    #         intersection_result['prompt'] = intersection_final_prompt
+    #     else:
+    #         intersection_response = get_open_llm_result(
+    #                 system_prompt, evidence_user_prompt, var_dict=llm_var, data=data, parse=parse
+    #             )
+    #         intersection_result['response'] = intersection_response
+    
+    # # union
+    # if (union_string == ""):
+    #     union_result = {}
+    # else:
+    #     # consecutive_result = consecutive_string
+    #     llm_var = {
+    #         'demonstrations': union_demonstrations, 
+    #         'context': context,
+    #         'evidence': union_string,
+    #         'head_entity': head_mention,
+    #         'tail_entity': tail_mention
+    #     }
+    #     if (model == "gpt-3.5-turbo" or model == "gpt-4o-mini"):
+    #         union_response, union_top_classes, union_final_prompt = utils.get_llm_result(
+    #             system_prompt, evidence_user_prompt, var_dict=llm_var, model=model)
+    #         union_result['response'] = union_response
+    #         union_result['top_logprobs'] = union_top_classes
+    #         union_result['evidence'] = union_string
+    #         union_result['prompt'] = union_final_prompt
+    #     else:
+    #         union_response = get_open_llm_result(
+    #                 system_prompt, evidence_user_prompt, var_dict=llm_var, data=data, parse=parse
+    #             )
+    #         union_result['response'] = union_response
+
 
     ##################
     # 轉為 json 並縮排
@@ -202,9 +278,12 @@ def get_all_triplets(row, df_test, search_ecidence_type="", sample_num=1, model=
     consecutive_result = utils.dict_to_json(consecutive_result)
     multi_hop_result = utils.dict_to_json(multi_hop_result)
     default_result = utils.dict_to_json(default_result)
+    # intersection_result = utils.dict_to_json(intersection_result)
+    # union_result = utils.dict_to_json(union_result)
 
-    # return "", "", "", default_string
+    # return original_token_num, consecutive_token_num, multi_hop_token_num, default_token_num
     return original_result, consecutive_result, multi_hop_result, default_result
+    # return intersection_result, union_result
 
 # %%
 def main(date, inference, search_ecidence_type, sample_num, has_reason, model="gpt-3.5-turbo", parse=False, data=["webmd", "bc5cdr"]):
@@ -212,11 +291,13 @@ def main(date, inference, search_ecidence_type, sample_num, has_reason, model="g
     if (data == "webmd"):
         store_path = "/home/zchenchen1999/thesis_formal/main/result/webmd"
         df_train = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_train.csv')
-        df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_test.csv')
+        # df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_test.csv')
+        df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_test2.csv')
     else:
         store_path = "/home/zchenchen1999/thesis_formal/main/result/bc5cdr"
         df_train = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_train_smallset.csv')
-        df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_test.csv')
+        # df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_test.csv')
+        df_test = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_test2.csv')
 
     # 轉換成 list
     df_train = utils.str_to_list(df_train, 
@@ -241,7 +322,7 @@ def main(date, inference, search_ecidence_type, sample_num, has_reason, model="g
     # test set 取得 demonstration
     df_test = test_get_demonstration(df_test, search_ecidence_type=search_ecidence_type, has_reason=has_reason, data=data)
 
-    # df_train = df_train.head(1)
+    # df_train = df_train.head(5)
     print(f"test set (for sample) shape: {df_test.shape}")
     print(f"train set (for inference) shape: {df_train.shape}")
 
@@ -250,8 +331,10 @@ def main(date, inference, search_ecidence_type, sample_num, has_reason, model="g
         lambda row: get_all_triplets(row, df_test, search_ecidence_type=search_ecidence_type, sample_num=sample_num, model=model, parse=parse, data=data), axis=1, result_type='expand')
     df_train = df_train[['sents', 'sents_replace_pronoun', 'drugs', 'symptoms', 'ground_truth', 'original_result', 'consecutive_result', 'multi_hop_result', 'default_result']]
 
-    # df_train['has_multi_hop_path'] = df_train['sentences_index'].apply(lambda x: len(x[0]) > 1)
-    # df_train['multi_path_count'] = df_train['sentences_index'].apply(lambda x: len(x))
+    # inference(intersection_result & union_result)
+    # df_train[['intersection_result', 'union_result']] = df_train.progress_apply(
+    #     lambda row: get_all_triplets(row, df_test, search_ecidence_type=search_ecidence_type, sample_num=sample_num, model=model, parse=parse, data=data), axis=1, result_type='expand')
+    # df_train = df_train[['sents', 'sents_replace_pronoun', 'drugs', 'symptoms', 'ground_truth', 'intersection_result', 'union_result']]
 
     if (has_reason):
         reason_path = 'reasoning'
@@ -262,27 +345,26 @@ def main(date, inference, search_ecidence_type, sample_num, has_reason, model="g
         if_replace_pronoun_path = "replace_pronoun"
     else:
         if_replace_pronoun_path = "original_context"
-    
-
 
     df_train.to_csv(f'{store_path}/{if_replace_pronoun_path}/{reason_path}/{date}_{inference}_r_ds_{model}.csv')
     print(f'結果已存到以下路徑：{store_path}/{if_replace_pronoun_path}/{reason_path}/{date}_{inference}_r_ds_{model}.csv')
 # %%
 # 參數設定
-date = "11_28-2"
+date = "1_31"
 # ['', '_replace_pronoun']
 search_ecidence_type = "_replace_pronoun"
 # 1, 2
-sample_num = 2
+sample_num = 1
 # [True, False]
 has_reason = False
 # 'train', 'test'
 inference = "train"
 # gpt-3.5-turbo, gpt-4o-mini, Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf, Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf
-model = "Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf"
+# ! 還要改 openllm 模型路徑
+model = "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
 # True, False
 parse = False
 # webmd, bc5cdr
-data = "bc5cdr"
+data = "webmd"
 
 main(date=date, inference=inference, search_ecidence_type=search_ecidence_type, sample_num=sample_num, has_reason=has_reason, model=model, parse=parse, data=data)

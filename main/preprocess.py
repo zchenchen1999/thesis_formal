@@ -13,7 +13,7 @@ from evidence_path_umls import get_umls_evidence
 # %%
 
 def main():
-    df = pd.read_csv('/home/zchenchen1999/thesis/dataset/BC5CDR/BC5CDR_all.csv')
+    df = pd.read_csv('/home/zchenchen1999/thesis_formal/dataset/BC5CDR/BC5CDR_all.csv')
 
     # df = df.head(1)
     # 轉換成 list
@@ -39,13 +39,14 @@ def main():
         lambda relation_list: [(x.lower(), y.lower(), z.lower()) for x, y, z in relation_list]
     )
 
-    # 產生 spacy entity
+    # 產生 spacy, scispacy entity
     df[['spacy_entity', 'scispacy_entity']] = df.apply(lambda x: get_entities(x['text']), axis=1, result_type='expand')
     df[['spacy_entity_replace_pronoun', 'scispacy_entity_replace_pronoun']] = df.apply(lambda x: get_entities(x['text_replace_pronoun']), axis=1, result_type='expand')
 
     # 使用的 context_type 種類（原始 or 替換代名詞）
     context_type = "_replace_pronoun" # "", "_replace_pronoun"
 
+    # 取得 drug 的 concept (用於 UMLS)
     df['drugs'] = df['drugs'].progress_apply(
         lambda drug_list: [(item, value1, value2) 
             for item, (value1, value2) in [(item, utils.get_mention_concept(item, mention_type='drug'))
@@ -87,21 +88,37 @@ def main():
     print("正在處理 default evidence...")
     df['default_evidence'] = df.apply(lambda x: utils.get_default_string(x['drugs'][0], x['symptoms'][0], x[f'sents{context_type}'], x['all_drug'], x['all_symptom'], x[f'spacy_entity{context_type}'], x[f'scispacy_entity{context_type}']), axis=1)
 
+    print("正在處理 intersection evidence...")
+    df['intersection_evidence'] = df.apply(lambda x: utils.get_intersection_string(x['drugs'][0], x['symptoms'][0], x[f'sents{context_type}'], x['all_drug'], x['all_symptom'], x[f'spacy_entity{context_type}'], x[f'scispacy_entity{context_type}']), axis=1)
+
+    print("正在處理 union evidence...")
+    df['union_evidence'] = df.apply(lambda x: utils.get_union_string(x['drugs'][0], x['symptoms'][0], x[f'sents{context_type}'], x['all_drug'], x['all_symptom'], x[f'spacy_entity{context_type}'], x[f'scispacy_entity{context_type}']), axis=1)
+
     # 重新排序
     df = df[['id', 'title', 'drugs', 'symptoms', 'relations', 'text', 'sents',
             'spacy_entity', 'scispacy_entity', 'text_replace_pronoun',
             'sents_replace_pronoun', 'spacy_entity_replace_pronoun',
             'scispacy_entity_replace_pronoun', 'all_drug', 'all_drug_concept',
             'all_symptom', 'all_symptom_concept', 'all_scispacy_concept',
-            'consecutive_evidence', 'multi_hop_evidence', 'default_evidence',
+            'consecutive_evidence', 'multi_hop_evidence', 'default_evidence', 'intersection_evidence', 'union_evidence',
             'ground_truth']]
 
     # 分成兩個資料集
     train_set = df.groupby('ground_truth', group_keys=False).apply(lambda x: x.sample(frac=0.7))
     test_set = df.drop(train_set.index) # 剩下的資料拿去抽樣 demonstration
 
-    train_set.to_csv("/home/zchenchen1999/thesis/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_train.csv", index=False)
-    test_set.to_csv("/home/zchenchen1999/thesis/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_test.csv", index=False)
+    train_set.to_csv("/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_train.csv", index=False)
+    test_set.to_csv("/home/zchenchen1999/thesis_formal/main/preprocessed_data/BC5CDR/BC5CDR_preprocess_test.csv", index=False)
     return df
 main()
+# %%
+# df = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_test.csv')
+# df = utils.str_to_list(df, ['drugs', 'symptoms', 'sents_replace_pronoun', 'all_drug', 'all_symptom', 'scispacy_entity_replace_pronoun'])
+
+# context_type = "_replace_pronoun"
+# print("正在處理 intersection evidence...")
+# df['intersection_evidence'] = df.apply(lambda x: utils.get_intersection_string(x['drugs'][0], x['symptoms'][0], x[f'sents{context_type}'], x['all_drug'], x['all_symptom'], x[f'spacy_entity{context_type}'], x[f'scispacy_entity{context_type}']), axis=1)
+# print("正在處理 union evidence...")
+# df['union_evidence'] = df.apply(lambda x: utils.get_union_string(x['drugs'][0], x['symptoms'][0], x[f'sents{context_type}'], x['all_drug'], x['all_symptom'], x[f'spacy_entity{context_type}'], x[f'scispacy_entity{context_type}']), axis=1)
+# df.to_csv("/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_test2.csv", index=False)
 # %%

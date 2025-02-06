@@ -8,106 +8,11 @@ import numpy as np
 from sklearn.model_selection import ParameterGrid
 from sklearn.metrics import classification_report
 from collections import Counter
+from bstrap import bootstrap, boostrapping_CI
+from statsmodels.stats.contingency_tables import mcnemar
 
 import utils
-
 # %%
-# 從 json 字串中抓取答案
-def extract_answer_from_string(string_):
-    # 將換行移除，才能成功轉換
-    string_ = string_.replace("\n", "")
-    # print(string_)
-    try:
-        # 可以成功轉換
-        dict_result = json.loads(string_)
-        answer = dict_result['ADEs']
-        # answer = dict_result['Drug_Effects']
-    except:
-        # 無法轉換，使用正則表達式抓取
-        pattern = r'\[\s*(?:\[\"[^\"]*\",\s?\"[^\"]*\"\],?\s?)*\s*\]|\[\]'
-        matches = re.findall(pattern, string_)
-        if (len(matches) < 1):
-            print(f"RE無法抓取到: {string_}")
-        try:
-            # 將 match 到的字串轉為 list
-            # 使用 ast.literal_eval() 将字符串转换为真正的列表
-            answer = ast.literal_eval(matches[0])
-        except:
-            print(f"無法轉為 list: {matches[0]}")
-    return answer
-
-def list_unique(data):
-    # 使用集合來移除重複項目
-    unique_data = []
-    seen = set()
-    for item in data:
-        tuple_item = tuple(item)
-        if tuple_item not in seen:
-            seen.add(tuple_item)
-            unique_data.append(item)
-    return unique_data
-
-# Function to swap elements
-def swap_elements(array):
-    return [[el[1], el[0], el[2]] for el in array]
-
-# def change_label(array):
-#     return [[label_dict[el[0]], el[1], el[2]] for el in array]
-
-
-def is_similar(a, b):
-    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.8
-
-def evaluate_ade(ground_truth, result):
-    # 将每个关系对转换为排序后的元组，并使用集合去重
-    # 第0項: head, 第1項: relation,  第2項: tail
-    ground_truth = set(tuple([ade[1].lower()] + sorted([ade[0].lower(), ade[2].lower()])) for ade in ground_truth)
-    result = set(tuple([ade[1].lower()] + sorted([ade[0].lower(), ade[2].lower()])) for ade in result)
-    # 轉換後： 第0項: relation, 第1項: head,  第2項: tail
-    # print(ground_truth)
-    # print(result)
-    # ground_truth = set(tuple(sorted([x.lower() for x in ade])) for ade in ground_truth)
-    # result = set(tuple(sorted([x.lower() for x in ade])) for ade in result)
-
-
-    # 計算正確的三元組數量
-    correct_triplets = 0
-    for res in result:
-        for gt in ground_truth:
-            if res[0]== gt[0] and is_similar(res[1], gt[1]) and is_similar(res[2], gt[2]):
-                correct_triplets += 1
-                break
-
-    TP = correct_triplets
-    FP = len(result) - TP
-    if (FP < 0): print(FP)
-    FN = len(ground_truth) - TP
-
-    # 計算精確度
-    precision = TP / (TP + FP) if (TP + FP) > 0 else 0
-    # 計算召回率
-    recall = TP / (FN + TP) if (FN + TP) > 0 else 0
-    # 計算 F1 分數
-    f1_score = 2 * (precision * recall) / (precision + recall) if precision + recall > 0 else 0
-
-    return TP, FP, FN, recall, precision, f1_score
-
-def evaluate_sigle(df):
-    df[['tp', 'fp', 'fn', 'micro recall', 'micro precision', 'micro f1']] = df.apply(lambda row: evaluate_ade(row['relation_in_text'], row['list_str']), axis=1, result_type='expand')
-    return df
-
-def evaluate_total(df):
-    TP = df['tp'].to_list()
-    FP = df['fp'].to_list()
-    FN = df['fn'].to_list()
-    
-    total_precision = sum(TP)/(sum(TP)+sum(FP))
-    total_recall = sum(TP)/(sum(TP)+sum(FN))
-    total_f1 = 2 * (total_precision * total_recall) / (total_precision + total_recall)
-
-    print(f'avg micro precision: {total_precision}')
-    print(f'avg micro recall: {total_recall}')
-    print(f'avg micro f1: {total_f1}')
 
 # 定义映射函数
 def map_relation(text):
@@ -291,7 +196,6 @@ def get_open_llm_result(target_dict, data):
     except:
         print(target_dict)
         return 'none_of_above'
-    return 
 
 
 # %%
@@ -320,6 +224,59 @@ def get_self_consistency_result(*results):
             best_probability = probability
     return best_answer
 
+# 定義一個函數來決定 priority_result 的值
+def determine_priority(row):
+    if row['consecutive_result'] != '{}':
+        return row['consecutive_result']
+    elif row['multi_hop_result'] != '{}':
+        return row['multi_hop_result']
+    elif row['default_result'] != '{}':
+        return row['default_result']
+    else:
+        return '{}'
+
+def load_path_data(file_path, evaluate_paths=[], subset=True):
+    df = pd.read_csv(file_path)
+    # # 讀取第一個 CSV 檔案
+    # csv1 = pd.read_csv('/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/shots/1_31_train_r_ds_Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf_1shots.csv')
+    # # csv1 = pd.read_csv('/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/shots/1_26_train_r_ds_Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf_1shots.csv')
+
+    # # 讀取第二個 CSV 檔案
+    # csv2 = pd.read_csv('/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/1_31_train_r_ds_Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf_with_intersection_union.csv')
+    # # csv2 = pd.read_csv('/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/1_31_train_r_ds_Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf_with_intersection_union.csv')
+
+    # # 按照 'sents', 'drugs', 'symptoms' 作為基準合併
+    # df = pd.merge(
+    #     csv1,
+    #     csv2[['Unnamed: 0','sents','sents_replace_pronoun', 'drugs', 'symptoms', 'intersection_result', 'union_result']],
+    #     on=['Unnamed: 0','sents','sents_replace_pronoun', 'drugs', 'symptoms'],
+    #     how='left'  # 使用左連接以保留第一個 CSV 中的所有資料
+    # )
+
+    # 取得優先級結果
+    df['priority_result'] = df.apply(determine_priority, axis=1)
+
+    if (subset):
+        df = df[df[evaluate_paths[0]] != '{}'] # 過濾掉沒結果的row
+    else:
+        pass
+    df = preprocess(df, evaluate_paths+['original_result'] if ('original_result' not in evaluate_paths) else evaluate_paths)
+
+    print(evaluate_paths[0])
+    print(df.shape)
+    return df
+
+def get_predictions(df, path="consecutive", dataset_type="webmd", llm_type="gpt", subset=True):
+    if (llm_type == "gpt"):
+        df['predict_original'] = df.apply(lambda x: get_highest_pro_result(x['original_result'], dataset_type), axis=1)
+        df['predict_compare'] = df.apply(lambda x: get_highest_pro_result(x['original_result'], dataset_type) if x[path] == {} else get_highest_pro_result(x[path], dataset_type), axis=1)
+    else:
+        df['predict_original'] = df.apply(lambda x: get_open_llm_result(x['original_result'], dataset_type), axis=1)
+        df['predict_compare'] = df.apply(lambda x: get_open_llm_result(x['original_result'], dataset_type) if x[path] == {} else get_open_llm_result(x[path], dataset_type), axis=1)
+    return df
+
+
+
 # df = pd.read_csv('/home/zchenchen1999/MindMap-DDI/data/Web_MD/result/self_consistency/all_train_.csv')
 # df = preprocess(df, ['result_1', 'result_2', 'result_3'])
 # # a = get_self_consistency_result(df.loc[2, 'result_1'], df.loc[2, 'result_2'], df.loc[2, 'result_3'])
@@ -332,259 +289,328 @@ def get_self_consistency_result(*results):
 # target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
 # report = classification_report(ground_truth, predict, labels=labels, target_names=target_names, output_dict=True)
 # report
-
 # %%
-# 找尋最佳 weights 與 threshold
-def optimize_weights_and_threshold(path, r_name=[]):
-    df = pd.read_csv(path)
-    df = preprocess(df, r_name)
+def print_classification_report(file_path, dataset_type, llm_type, evaluate_paths):
+    #################################################
+    #          衡量- LLM evidence 比較 - 總表         #
+    #################################################
+    print("""
+###########
+#   總表   #
+###########
+""")
+    df = load_path_data(file_path=file_path, evaluate_paths=evaluate_paths, subset=False)
+    df = get_predictions(df, path=evaluate_paths[0], dataset_type=dataset_type, llm_type=llm_type, subset=False)
 
-    # 過濾出每個欄位都有結果的資料
-    print(f"test shape before: {df.shape}") # 新增
-    for r in r_name: # 新增
-        df = df[df[r].apply(lambda x: len(x) >= 1)] # 新增
+    gt = df['ground_truth'].to_list()
+    compare = df['predict_compare'].to_list()
 
-    print(f"test shape after: {df.shape}")
-    # df = df[df['consecutive_result'] != "{}"]
-    # print(df.shape)
-    # df = preprocess(df, ['c_result', 'consecutive_result', 'path_two_result', 'path_three_result', 'd_result'])
+    report = classification_report(gt, compare, output_dict=True)
+    print(json.dumps(report, indent=4))
 
-    # 定義搜索範圍
-    param_grid = {f'{name}_weight': [i / 10.0 for i in range(0, 11)] for name in r_name}
-    
-    # 添加 a 和 b 的搜索範圍
-    param_grid['a'] = [i / 10.0 for i in range(0, 11)]
-    param_grid['b'] = [i / 10.0 for i in range(0, 11)]
-    # param_grid['b'] = [0] # 新增
-    param_grid_all = list(ParameterGrid(param_grid))
+    #################################################
+    #        衡量- LLM evidence 比較 - 各自比較        #
+    #################################################
+    print("""
+###########
+# 各自比較  #
+###########
+""")
 
-    # # 排除掉 c_weight, m_weight, d_weight 總和不為1的組合
-    # param_grid_filter = [p for p in param_grid_all if abs(p['c_weight'] + p['m_weight'] + p['d_weight'] - 1.0) < 1e-3]
+    df = load_path_data(file_path=file_path, evaluate_paths=evaluate_paths, subset=True)
+    df = get_predictions(df, path=evaluate_paths[0], dataset_type=dataset_type, llm_type=llm_type, subset=False)
 
-    # 動態過濾權重總和不等於 1 的組合
-    param_grid_filter = [
-        p for p in param_grid_all 
-        if abs(sum(p[f'{name}_weight'] for name in r_name) - 1.0) < 1e-3
-    ]
+    gt = df['ground_truth'].to_list()
+    original = df['predict_original'].to_list()
+    compare = df['predict_compare'].to_list()
 
-    # param_grid_filter = [i / 10.0 for i in range(0, 11)]
+    report_original = classification_report(gt, original, output_dict=True)
+    report_compare = classification_report(gt, compare, output_dict=True)
 
-    best_score = -float('inf')
-    best_params = None
-    best_report = ""
 
-    for params in param_grid_filter:
-        df_tmp = df.copy()
+    print("original")
+    print(json.dumps(report_original, indent=4))
+    print("\n=====================\n")
+    print(evaluate_paths[0])
+    print(json.dumps(report_compare, indent=4))
 
-        # 動態提取每個結果的權重
-        weights = {name: params[f'{name}_weight'] for name in r_name}
-        a = params['a']
-        b = params['b']
-        
-        # df_tmp['predict'] = df_tmp.apply(lambda x: get_combine_result(x['consecutive_result'], x['c_result'], x['d_result'], c_weight, m_weight, d_weight, a, b), axis=1)
-        # df_tmp['predict'] = df_tmp.apply(lambda x: get_combine_result(x['c_result'], x['m_result'], x['d_result'], c_weight, m_weight, d_weight, a, b), axis=1)
-        df_tmp['predict'] = df_tmp.apply(lambda x: get_combine_result(
-            *[(x[name], weights[name]) for name in r_name],
-            parm_a=a, parm_b=b), axis=1)
-        # df_tmp['predict'] = df_tmp.apply(lambda x: get_combine_result(x['c_result'], x['m_result'], x['d_result'], 1.0, 0.0, 0.0, params, 0.1), axis=1)
-        # df_tmp['predict'] = df_tmp.apply(lambda x: get_context_result(x['c_result'], 0), axis=1)
-    
-        ground_truth = df_tmp['ground_truth'].to_list()
-        predict = df_tmp['predict'].to_list()
-
-        # 明確指定 labels 和 target_names 的順序
-        labels = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-        target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-        report = classification_report(ground_truth, predict, labels=labels, target_names=target_names, output_dict=True)
-
-        weighted_avg_f1 = report['weighted avg']['f1-score']
-        # print(report)
-        # print(weighted_avg_f1)
-
-        if weighted_avg_f1 > best_score:
-            best_score = weighted_avg_f1
-            best_params = params
-            best_report = report
-        # break
-    # print(f"最佳分數: {best_score}")
-    # print(f"最佳參數: {best_params}")
-    # print(f"最佳報告: {best_report}")
-    return best_params
-
-# r_name = ['c_result', 'm_result', 'd_result']
-# optimize_weights_and_threshold('/home/zchenchen1999/MindMap-DDI/data/Web_MD/result/multi_path_result/all_test.csv', r_name)
-# %%
-#################################################
-#          衡量- LLM evidence 比較 - 總表         #
-#################################################
-# 衡量單一 LLM 回傳內容 (最高機率) - 總表
+# ===========參數設置============
+file_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf.csv'
 # webmd, bc5cdr
-data = "bc5cdr"
+dataset_type = "webmd"
 # gpt, openllm
-llm_type = "gpt"
-train_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/zeroshot_cot/12_05_bc5cdr_train_r_dsm_gpt-3.5-turbo.csv'
-
-r_name = ['multi_hop_result'] # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
-df = pd.read_csv(train_path)
-# df = df[df[r_name[0]] != '{}'] # 過濾掉沒結果的row
-print(r_name[0])
-print(df.shape)
-df = preprocess(df, r_name+['original_result'] if ('original_result' not in r_name) else r_name)
-# type(df.loc[0, 'consecutive_result'])
-# df['predict'] = df.apply(lambda x: get_highest_pro_result(x[r_name[0]])
-if (llm_type == "gpt"):
-    df['predict'] = df.apply(lambda x: get_highest_pro_result(x['original_result'], data) if x[r_name[0]] == {} else get_highest_pro_result(x[r_name[0]], data), axis=1)
-else:
-    print(data)
-    df['predict'] = df.apply(lambda x: get_open_llm_result(x['original_result'], data) if x[r_name[0]] == {} else get_open_llm_result(x[r_name[0]], data), axis=1)
-
-ground_truth = df['ground_truth'].to_list()
-predict = df['predict'].to_list()
-print(predict)
-
-# 明確指定 labels 和 target_names 的順序
-if (data == "webmd"):
-    labels = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-    target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-else:
-    labels = ['none_of_above', 'has_adverse_drug_reaction']
-    target_names = ['none_of_above', 'has_adverse_drug_reaction']
-
-report = classification_report(ground_truth, predict, labels=labels, target_names=target_names, output_dict=True)
-report
+llm_type = "openllm"
+# 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, intersection_result, union_result, priority_result, umls_result
+evaluate_paths = ['priority_result']
+# ==============================
+print_classification_report(file_path=file_path, dataset_type=dataset_type, llm_type=llm_type, evaluate_paths=evaluate_paths)
 # %%
-#################################################
-#        衡量- LLM evidence 比較 - 各自比較        #
-#################################################
+############################
+# boostrap
+############################
+def print_bootstrap(file_path, dataset_type="webmd", llm_type="gpt", evaluate_paths=['consecutive_result'], subset=True, nbr_runs=100):
+    ############################
+    # 1. implement metric
+    ############################
+    def compute_f1(df):
+        ground_truth = df['ground_truth'].to_list()
+        predict = df['predictions'].to_list()
+        report = classification_report(ground_truth, predict, output_dict=True)
+        return report['macro avg']['f1-score']
+    def compute_precision(df):
+        ground_truth = df['ground_truth'].to_list()
+        predict = df['predictions'].to_list()
+        report = classification_report(ground_truth, predict, output_dict=True)
+        return report['macro avg']['precision']
+    def compute_recall(df):
+        ground_truth = df['ground_truth'].to_list()
+        predict = df['predictions'].to_list()
+        report = classification_report(ground_truth, predict, output_dict=True)
+        return report['macro avg']['recall']
+    def compute_accuracy(df):
+        ground_truth = df['ground_truth'].to_list()
+        predict = df['predictions'].to_list()
+        report = classification_report(ground_truth, predict, output_dict=True)
+        return report['accuracy']
+    metric = compute_recall
+    
+    ############################
+    # 2. load data
+    ############################
+    df = load_path_data(file_path=file_path, evaluate_paths=evaluate_paths, subset=subset)
+    df = get_predictions(df, path=evaluate_paths[0], dataset_type=dataset_type, llm_type=llm_type, subset=subset)
+
+    print(df.shape)
+    ############################
+    # 3. reformat data to a single pandas dataframe per method with standardized column names
+    ############################
+    data_method1 = df[["ground_truth", "predict_original"]]
+    data_method1 = data_method1.rename(columns={"predict_original": "predictions"})
+    data_method2 = df[["ground_truth", "predict_compare"]]
+    data_method2 = data_method2.rename(columns={"predict_compare": "predictions"})
+
+    ############################
+     # 4. compare method 1 and 2 (same code as example 1)
+    ############################
+    stats_method1, stats_method2, p_value = bootstrap(metric, data_method1, data_method2, nbr_runs=nbr_runs, verbose=False)
+    print(stats_method1)
+    print(stats_method2)
+    print(p_value)
+
+    # # compute CI and mean for each method separately (same code as example 1)
+    # stats_method1 = boostrapping_CI(metric, data_method1, nbr_runs=nbr_runs, verbose=False)
+    # stats_method2 = boostrapping_CI(metric, data_method2, nbr_runs=nbr_runs, verbose=False)
+    # print(stats_method1)
+    # print(stats_method2)
+
+# %%
+def print_mcNemars(file_path, dataset_type="webmd", llm_type="gpt", evaluate_paths=['consecutive_result'], subset=True):
+
+    df = load_path_data(file_path=file_path, evaluate_paths=evaluate_paths, subset=subset)
+    df = get_predictions(df, path=evaluate_paths[0], dataset_type=dataset_type, llm_type=llm_type, subset=subset)
+
+    # 假設 ground_truth、original_result、consecutive_result 是 NumPy 陣列
+    ground_truth = df['ground_truth'].to_list()          # Ground truth labels
+    original = df['predict_original'].to_list()       # Predictions from original 
+    compare = df['predict_compare'].to_list()    # Predictions from consecutive 
+
+    # 初始化 a, b, c, d
+    a = b = c = d = 0
+
+    # 計算 a, b, c, d
+    for gt, ori, com in zip(ground_truth, original, compare):
+        if ori == gt and com == gt:
+            a += 1  # 兩個模型都正確
+        elif ori == gt and com != gt:
+            b += 1  # original 正確, compare 錯誤
+        elif ori != gt and com == gt:
+            c += 1  # original 錯誤, compare 正確
+        else:
+            d += 1  # 兩個模型都錯誤
+
+    # 建立 Contingency Table
+    contingency_table = [[a, b],
+                        [c, d]]
+    print(contingency_table)
+    # calculate mcnemar test
+    result = mcnemar(contingency_table, exact=True)
+    # summarize the finding
+    print('statistic=%.3f, p-value=%.3f' % (result.statistic, result.pvalue))
+    # interpret the p-value
+    alpha = 0.05
+    if result.pvalue > alpha:
+        print('Same proportions of errors (fail to reject H0)')
+    else:
+        print('Different proportions of errors (reject H0)')
+
+# ===========參數設置============
+file_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf.csv'
 # webmd, bc5cdr
-data = "webmd"
+dataset_type = "bc5cdr"
 # gpt, openllm
-llm_type = "gpt"
-train_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_15_train_r_dsm_gpt-4o-mini.csv'
-
-r_name = ['default_result'] # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
-
-df = pd.read_csv(train_path)
-df = df[df[r_name[0]] != '{}'] # 過濾掉沒結果的row
-# df = df[df['default_reasoning'] != '{}'] # [original_reasoning, consecutive_reasoning, multi_hop_reasoning, default_reasoning, umls_reasoning]
-print(r_name[0])
-print(df.shape)
-
-df = preprocess(df, r_name+['original_result'] if ('original_result' not in r_name) else r_name)
-if (llm_type == "gpt"):
-    df['predict_original'] = df.apply(lambda x: get_highest_pro_result(x['original_result'], data), axis=1)
-    df['predict_compare'] = df.apply(lambda x: get_highest_pro_result(x[r_name[0]], data), axis=1)
-else:
-    df['predict_original'] = df.apply(lambda x: get_open_llm_result(x['original_result'], data), axis=1)
-    df['predict_compare'] = df.apply(lambda x: get_open_llm_result(x[r_name[0]], data), axis=1)
-
-ground_truth = df['ground_truth'].to_list()
-predict_original = df['predict_original'].to_list()
-predict_compare = df['predict_compare'].to_list()
-
-# 明確指定 labels 和 target_names 的順序
-if (data == "webmd"):
-    labels = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-    target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-else:
-    labels = ['none_of_above', 'has_adverse_drug_reaction']
-    target_names = ['none_of_above', 'has_adverse_drug_reaction']
-
-report_original = classification_report(ground_truth, predict_original, labels=labels, target_names=target_names, output_dict=True)
-report_compare = classification_report(ground_truth, predict_compare, labels=labels, target_names=target_names, output_dict=True)
-
-print("original")
-print(json.dumps(report_original, indent=4))
-print("\n=====================\n")
-print(r_name[0])
-print(json.dumps(report_compare, indent=4))
+llm_type = "openllm"
+# 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result, priority_result
+evaluate_paths = ["priority_result"]
+# 總表或各自比較表 True, False
+subset = False
+# ==============================
+print_mcNemars(file_path=file_path, dataset_type=dataset_type, 
+               llm_type=llm_type, evaluate_paths=evaluate_paths, 
+               subset=subset)
 # %%
-# #################################################
-# #                衡量-最佳參數組合                 #
-# #################################################
-# # 測試檔案路徑
-# test_path = '/home/zchenchen1999/MindMap-DDI/data/Web_MD/result/multi_path_result/10_12_test_r_dsm.csv'
-# train_path = '/home/zchenchen1999/MindMap-DDI/data/Web_MD/result/multi_path_result/10_12_train_r_dsm.csv'
-# # test set 先取得最佳參數
-# r_name = ['original_result', 'consecutive_result', 'default_result'] # 想要評估的欄位
-# best_params = optimize_weights_and_threshold(test_path, r_name)
-# print(f'最佳參數： {best_params}')
+# def main():
+#     for path in ['original_result', 'consecutive_result', 'multi_hop_result', 'default_result']:
+#         ############################
+#         # WebMD
+#         ############################
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "webmd"
+#         # gpt, openllm
+#         llm_type = "openllm"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # 總表或各自比較表 True, False
+#         subset = True
+#         # 算幾次指標 100, 1000, 10000
+#         nbr_runs = 10000
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# # 衡量多種 path 結果
-# df = pd.read_csv(train_path)
-# df = preprocess(df, r_name)
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "webmd"
+#         # gpt, openllm
+#         llm_type = "openllm"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# # 過濾出每個欄位都有結果的資料
-# for r in r_name: # 新增
-#     df = df[df[r].apply(lambda x: len(x) >= 1)] # 新增
-# print(f"train shape: {df.shape}") # 新增
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_15_train_r_dsm_gpt-3.5-turbo.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "webmd"
+#         # gpt, openllm
+#         llm_type = "gpt"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# df['predict'] = df.apply(lambda x: get_combine_result(
-#     *[(x[name], best_params[f'{name}_weight']) for name in r_name],
-#     parm_a=best_params['a'], parm_b=best_params['b']), axis=1)
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/webmd/replace_pronoun/no_reasoning/11_15_train_r_dsm_gpt-4o-mini.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "webmd"
+#         # gpt, openllm
+#         llm_type = "gpt"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# ground_truth =  df['ground_truth'].to_list()
-# predict = df['predict'].to_list()
+#         ############################
+#         # BC5CDR
+#         ############################
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct.Q4_K_M.gguf.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "bc5cdr"
+#         # gpt, openllm
+#         llm_type = "openllm"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# print(df['ground_truth'].value_counts())
-# print(df['predict'].value_counts())
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/11_28_train_r_ds_Meta-Llama-3.1-8B-Instruct-Doctor.Q4_K_M.gguf.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "bc5cdr"
+#         # gpt, openllm
+#         llm_type = "openllm"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-# # 明確指定 labels 和 target_names 的順序
-# labels = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-# target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-# # Generate the classification report
-# report = classification_report(ground_truth, predict, labels=labels, target_names=target_names, output_dict=True)
-# report
-# # %%
-# #################################################
-# #                衡量-純 LLM 回傳內容             #
-# #################################################
-# train_path = '/home/zchenchen1999/thesis/main/result/zeroshot_cot/11_15_train_r_dsm_gpt-3.5-turbo.csv'
-# r_name = ['original_result'] # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
-# df = pd.read_csv(train_path)
-# df = df[df[r_name[0]] != '{}'] # 過濾掉沒結果的row
-# print(r_name[0])
-# print(df.shape)
-# df = preprocess(df, r_name)
-# # type(df.loc[0, 'consecutive_result'])
-# df['predict'] = df.apply(lambda x: get_response_result(x[r_name[0]]), axis=1)
-# ground_truth = df['ground_truth'].to_list()
-# predict = df['predict'].to_list()
-# # 明確指定 labels 和 target_names 的順序
-# labels = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-# target_names = ['none_of_above', 'has_adverse_drug_reaction', 'has_positive_reaction', 'has_negative_reaction']
-# report = classification_report(ground_truth, predict, labels=labels, target_names=target_names, output_dict=True)
-# report
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/11_28_train_r_ds_gpt-3.5-turbo.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "bc5cdr"
+#         # gpt, openllm
+#         llm_type = "gpt"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
 
-
-
-
-
-
-
-
-
-
-
-
-
-# %%
-# %%
-# train_path = ''
-
-# df = pd.read_csv(train_path)
-
-# # 定義 reasoning 和 result 欄位的對應關係
-# paths = ['original', 'consecutive', 'multi_hop', 'default']
-# reasoning_columns = [f"{path}_reasoning" for path in paths]
-# result_columns = [f"{path}_result" for path in paths]
-
-# # 遍歷每一個 reasoning 和 result 欄位
-# for reasoning_col, result_col in zip(reasoning_columns, result_columns):
-#     # 找出 reasoning 欄位為 '{}' 的行
-#     mask = df[reasoning_col] == '{}'
-#     # 將對應的 result 欄位改為 '{}'
-#     df.loc[mask, result_col] = '{}'
-# df
-# df.to_csv(train_path, index=False)
-# # %%
+#         # ===========參數設置============
+#         file_path = '/home/zchenchen1999/thesis_formal/main/result/bc5cdr/replace_pronoun/no_reasoning/11_28_train_r_ds_gpt-4o-mini.csv'
+#         # webmd, bc5cdr
+#         dataset_type = "bc5cdr"
+#         # gpt, openllm
+#         llm_type = "gpt"
+#         # 想要評估的欄位  [original_result, consecutive_result, multi_hop_result, default_result, umls_result
+#         evaluate_paths = [path]
+#         # ==============================
+#         print(f"""
+#         資料集：{dataset_type}
+#         LLM: {llm_type}
+#         檔案：{file_path}
+#         各自比較：{subset}""")
+#         print_bootstrap(file_path=file_path, dataset_type=dataset_type, 
+#                         llm_type=llm_type, evaluate_paths=evaluate_paths, 
+#                         subset=subset, nbr_runs=nbr_runs)
+# main()

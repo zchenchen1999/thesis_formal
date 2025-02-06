@@ -3,7 +3,7 @@ from neo4j import GraphDatabase, basic_auth
 import itertools
 import pandas as pd
 import utils
-from RE_prompt import get_keyword_form_mention_prompt_system, get_keyword_form_mention_prompt_user
+# from RE_prompt import get_keyword_form_mention_prompt_system, get_keyword_form_mention_prompt_user
 from RE_prompt import rewrite_KG_path_prompt_system, rewrite_KG_path_prompt_user
 
 # %%

@@ -218,12 +218,12 @@ def extract_path(sents, vertexSet, keep_sent_order, path_type="merge"):
     else:
         return default
 
-
 # %%
 def get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, path):
     
     
-    envidence_string = ""
+    evidence_string = ""
+    evidence_index_set = set()
 
     for i in path.keys():
         for j in path[i]:
@@ -231,11 +231,12 @@ def get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, pa
                 continue
             if (entity_list[i] == head_entity and entity_list[j] == tail_entity):
                 for x_index, x in enumerate(path[i][j]):
-                    envidence_string += f"{x_index+1}. {sents[x]}\n"
-    # envidence_string = envidence_string[:-1] if envidence_string != "" else envidence_string
-    # if (envidence_string == ""):
+                    evidence_index_set.add(x)
+                    evidence_string += f"{x_index+1}. {sents[x]}\n"
+    # evidence_string = evidence_string[:-1] if evidence_string != "" else evidence_string
+    # if (evidence_string == ""):
     #     print(path)
-    return envidence_string
+    return sorted(list(evidence_index_set)), evidence_string
 
 
 tmp_string = """
@@ -326,3 +327,63 @@ def count_path_differ(context, sents, rewrite_sents, drug_mentions, symptom_ment
                 pass
     
     return json.dumps(consecutive, indent=4), json.dumps(two, indent=4), json.dumps(three, indent=4), json.dumps(all, indent=4), differ_count, total_count
+
+
+# # %%
+# ############################################
+# # Test
+# ############################################
+# import pandas as pd
+# import ast
+
+# def str_to_list(df, columns):
+#     for c in columns:
+#         df[c] = df[c].apply(lambda x: ast.literal_eval(x))
+#     return df
+# def add_all_entities(*args):
+#     unique_elements = set()
+
+#     for arg in args:
+#         for item in arg:
+#             if isinstance(item, tuple):
+#                 unique_elements.add(item[0])  # 如果是 tuple，取第 0 項
+#             else:
+#                 unique_elements.add(item)  # 如果不是 tuple，直接取值
+    
+#     return list(unique_elements)
+
+# store_path = "/home/zchenchen1999/thesis_formal/main/result/webmd"
+# df_train = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_train.csv')
+
+# # 轉換成 list
+# df_train = str_to_list(df_train, 
+#         ['drugs', 'symptoms', 'relations', 
+#         'sents', 'spacy_entity', 'scispacy_entity',
+#         'sents_replace_pronoun', 'spacy_entity_replace_pronoun', 'scispacy_entity_replace_pronoun',
+#         'all_drug', 'all_symptom']
+#     )
+
+# row = df_train.loc[0]
+
+# search_ecidence_type = "_replace_pronoun"
+# context = row[f'text{search_ecidence_type}']
+# sents = row[f'sents{search_ecidence_type}']
+# head_mention = row['drugs'][0]
+# tail_mention = row['symptoms'][0]
+# all_drug_metions = row['all_drug']
+# all_symptom_mentions = row['all_symptom']
+# # spacy_entity = row[f'spacy_entity{search_ecidence_type}']
+# scispacy_entity = row[f'scispacy_entity{search_ecidence_type}']
+
+# entity_list = add_all_entities(all_drug_metions, all_symptom_mentions, scispacy_entity)
+# entity_list
+# # %%
+# vertexSet = get_vertex_set(entity_list, sents)
+#     # consecutive
+# consecutive = extract_path(sents, vertexSet, True, path_type="consecutive")
+# consecutive
+# consecutive_index, consecutive_string = get_evidence_by_entity_pair(head_mention, tail_mention, entity_list, sents, consecutive)
+# consecutive_string
+# # %%
+# consecutive_index
+# # %%

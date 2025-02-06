@@ -100,7 +100,7 @@ def order_sentences(original_sentences, evidence_sentences_index):
     # 創建 evidence_sentences 的索引順序
     for index, sentence_index in enumerate(sorted_evidence_indexs):
         envidence_string += f"{index+1}. {original_sentences[sentence_index]}\n"
-    return envidence_string
+    return sorted_evidence_indexs, envidence_string
 
 def get_evidence_sents(sentences_for_search, all_entities, head_entity, tail_entity):
     # 1. 建立文件 graph (entity 為 node, 共現句子為 edge)
@@ -109,10 +109,10 @@ def get_evidence_sents(sentences_for_search, all_entities, head_entity, tail_ent
     try:
         shortest_paths = list(nx.all_shortest_paths(graph, source=head_entity, target=tail_entity, weight=None))
         evidence_sentences, evidence_sentences_index, link_path_string = get_sentences_from_path(graph, shortest_paths)
-        ordered_evidence_sentences = order_sentences(sentences_for_search, evidence_sentences_index)
-        return evidence_sentences_index, link_path_string, ordered_evidence_sentences
+        ordered_evidence_indexs, ordered_evidence_sentences = order_sentences(sentences_for_search, evidence_sentences_index)
+        return ordered_evidence_indexs, link_path_string, ordered_evidence_sentences
     except:
-        return [[]], "", ""
+        return [], "", ""
     # shortest_paths = p.get(head_entity, {}).get(tail_entity, None)
     # if (shortest_paths == None):
     #     return [], "", ""
@@ -120,3 +120,58 @@ def get_evidence_sents(sentences_for_search, all_entities, head_entity, tail_ent
     #     evidence_sentences, sentences_index, link_path_string = get_sentences_from_path(graph, shortest_paths)
     #     ordered_evidence_sentences = order_sentences(all_sentences, evidence_sentences)
     #     return sentences_index, link_path_string, ordered_evidence_sentences
+
+# # %%
+# ############################################
+# # Test
+# ############################################
+# import pandas as pd
+# import ast
+
+# def str_to_list(df, columns):
+#     for c in columns:
+#         df[c] = df[c].apply(lambda x: ast.literal_eval(x))
+#     return df
+# def add_all_entities(*args):
+#     unique_elements = set()
+
+#     for arg in args:
+#         for item in arg:
+#             if isinstance(item, tuple):
+#                 unique_elements.add(item[0])  # 如果是 tuple，取第 0 項
+#             else:
+#                 unique_elements.add(item)  # 如果不是 tuple，直接取值
+    
+#     return list(unique_elements)
+
+# store_path = "/home/zchenchen1999/thesis_formal/main/result/webmd"
+# df_train = pd.read_csv('/home/zchenchen1999/thesis_formal/main/preprocessed_data/WebMD/WebMD_annotated_v2_exploded_reasoning_train.csv')
+
+# # 轉換成 list
+# df_train = str_to_list(df_train, 
+#         ['drugs', 'symptoms', 'relations', 
+#         'sents', 'spacy_entity', 'scispacy_entity',
+#         'sents_replace_pronoun', 'spacy_entity_replace_pronoun', 'scispacy_entity_replace_pronoun',
+#         'all_drug', 'all_symptom']
+#     )
+
+# row = df_train.loc[0]
+
+# search_ecidence_type = "_replace_pronoun"
+# context = row[f'text{search_ecidence_type}']
+# sents = row[f'sents{search_ecidence_type}']
+# head_mention = row['drugs'][0]
+# tail_mention = row['symptoms'][0]
+# all_drug_metions = row['all_drug']
+# all_symptom_mentions = row['all_symptom']
+# # spacy_entity = row[f'spacy_entity{search_ecidence_type}']
+# scispacy_entity = row[f'scispacy_entity{search_ecidence_type}']
+
+# entity_list = add_all_entities(all_drug_metions, all_symptom_mentions, scispacy_entity)
+# entity_list
+# # %%
+# sentences_index, link_path_string, multi_hop_string = get_evidence_sents(sents, entity_list, head_mention, tail_mention)
+# multi_hop_string
+# # %%
+# sentences_index
+# # %%

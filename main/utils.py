@@ -81,13 +81,13 @@ def get_llm_result(system_prompt, user_prompt, var_dict={}, model="gpt-4o-mini")
 # consecutive
 def get_consecutive_string(head_entity, tail_entity, sents, all_drugs, all_symptoms, spacy_entity, scispacy_entity):
     # 結合所有 entity
-    entity_list = add_all_entities(all_drugs, all_symptoms, spacy_entity, scispacy_entity)
+    entity_list = add_all_entities(all_drugs, all_symptoms, scispacy_entity)
     # 取得 vertex
     vertexSet = get_vertex_set(entity_list, sents)
     # 取得 consecutive 的 path
     consecutive = extract_path(sents, vertexSet, True, path_type="consecutive")
     # 取得 string
-    consecutive_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, consecutive)
+    _, consecutive_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, consecutive)
     return consecutive_string
 
 # multi-hop
@@ -100,14 +100,58 @@ def get_multi_hop_string(head_entity, tail_entity, sents, all_drugs, all_symptom
 # default
 def get_default_string(head_entity, tail_entity, sents, all_drugs, all_symptoms, spacy_entity, scispacy_entity):
     # 結合所有 entity
-    entity_list = add_all_entities(all_drugs, all_symptoms, spacy_entity, scispacy_entity)
+    entity_list = add_all_entities(all_drugs, all_symptoms, scispacy_entity)
     # 取得 vertex
     vertexSet = get_vertex_set(entity_list, sents)
     # 取得 consecutive 的 path
     default = extract_path(sents, vertexSet, True, path_type="default")
     # 取得 string
-    default_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, default)
+    _, default_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, default)
     return default_string
+
+# intersection
+def get_intersection_string(head_entity, tail_entity, sents, all_drugs, all_symptoms, spacy_entity, scispacy_entity):
+    # 結合所有 entity
+    entity_list = add_all_entities(all_drugs, all_symptoms, scispacy_entity)
+    # 取得 vertex
+    vertexSet = get_vertex_set(entity_list, sents)
+    # 取得 consecutive 的 path
+    consecutive = extract_path(sents, vertexSet, True, path_type="consecutive")
+    # 取得 default 的 path
+    default = extract_path(sents, vertexSet, True, path_type="default")
+    # 取得 string
+    consecutive_indexs, consecutive_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, consecutive)
+    multi_hop_indexs, _, graph_base_string = get_evidence_sents(sents, entity_list, head_entity, tail_entity)
+    default_indexs, default_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, default)
+    # 取交集
+    intersection_indexs = set(consecutive_indexs) & set(multi_hop_indexs) & set(default_indexs)
+    intersection_indexs = list(intersection_indexs)
+    intersection_string = ""
+    for index, sentence_index in enumerate(intersection_indexs):
+        intersection_string += f"{index+1}. {sents[sentence_index]}\n"
+    return intersection_string
+
+# union
+def get_union_string(head_entity, tail_entity, sents, all_drugs, all_symptoms, spacy_entity, scispacy_entity):
+    # 結合所有 entity
+    entity_list = add_all_entities(all_drugs, all_symptoms, scispacy_entity)
+    # 取得 vertex
+    vertexSet = get_vertex_set(entity_list, sents)
+    # 取得 consecutive 的 path
+    consecutive = extract_path(sents, vertexSet, True, path_type="consecutive")
+    # 取得 default 的 path
+    default = extract_path(sents, vertexSet, True, path_type="default")
+    # 取得 string
+    consecutive_indexs, consecutive_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, consecutive)
+    multi_hop_indexs, _, graph_base_string = get_evidence_sents(sents, entity_list, head_entity, tail_entity)
+    default_indexs, default_string = get_evidence_by_entity_pair(head_entity, tail_entity, entity_list, sents, default)
+    # 取聯集
+    union_indexs = set(consecutive_indexs) | set(multi_hop_indexs) | set(default_indexs)
+    union_indexs = list(union_indexs)
+    union_string = ""
+    for index, sentence_index in enumerate(union_indexs):
+        union_string += f"{index+1}. {sents[sentence_index]}\n"
+    return union_string
 
 ###########################################
 # 合併所有種類 entity
